@@ -1,0 +1,6 @@
+{
+  "name": "App Lock",
+  "description": "Secure your apps with a custom PIN and biometric authentication with background monitoring and persistent device reboot protection.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
