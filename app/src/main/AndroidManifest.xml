@@ -22,6 +22,9 @@
     <!-- PERSIST AFTER DEVICE REBOOTS -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Tactile Haptic Vibration Feedback -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

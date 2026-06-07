@@ -5,7 +5,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import android.os.Bundle
+import android.os.Build
 import android.util.Log
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -34,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -45,6 +48,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.fragment.app.FragmentActivity
 import com.example.data.AppLockRepository
 import com.example.ui.theme.*
+import kotlinx.coroutines.delay
 
 class LockActivity : FragmentActivity() {
 
@@ -52,10 +56,34 @@ class LockActivity : FragmentActivity() {
     private var targetPackage: String = ""
     private var appLabel: String = ""
     private var appIcon: Drawable? = null
+    private val isUnlockedAnimTriggered = mutableStateOf(false)
+
+    private fun optimizeRefreshRate() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                window.decorView.post {
+                    val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                    val display = display
+                    if (display != null) {
+                        val modes = display.supportedModes
+                        val mode120 = modes.firstOrNull { it.refreshRate >= 110f }
+                        if (mode120 != null) {
+                            val params = window.attributes
+                            params.preferredDisplayModeId = mode120.modeId
+                            window.attributes = params
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore gracefully
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        optimizeRefreshRate()
 
         repository = AppLockRepository.getInstance(this)
         targetPackage = intent.getStringExtra("target_package") ?: ""
@@ -73,27 +101,56 @@ class LockActivity : FragmentActivity() {
 
         setContent {
             var themeMode by remember { mutableStateOf(repository.getThemeMode()) }
-            MyApplicationTheme(themeMode = themeMode) {
-                LockScreenContent(
-                    appName = appLabel,
-                    appIcon = appIcon,
-                    savedPin = repository.getSavedPin() ?: "",
-                    isBiometricAvailable = repository.isBiometricEnabled(),
-                    currentTheme = themeMode,
-                    onThemeSelected = { newTheme ->
-                        repository.setThemeMode(newTheme)
-                        themeMode = newTheme
-                    },
-                    onSuccess = {
+            val isUnlocked = isUnlockedAnimTriggered.value
+
+            val scale by animateFloatAsState(
+                targetValue = if (isUnlocked) 0.88f else 1.0f,
+                animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                label = "exit_scale"
+            )
+            val opacity by animateFloatAsState(
+                targetValue = if (isUnlocked) 0f else 1.0f,
+                animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                label = "exit_opacity",
+                finishedListener = {
+                    if (isUnlocked) {
                         onUnlockSuccess()
-                    },
-                    onBiometricClick = {
-                        showBiometricPrompt()
-                    },
-                    onBackPress = {
-                        exitToHomeScreen()
                     }
-                )
+                }
+            )
+
+            MyApplicationTheme(themeMode = themeMode) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            alpha = opacity
+                        )
+                ) {
+                    LockScreenContent(
+                        appName = appLabel,
+                        appIcon = appIcon,
+                        savedPin = repository.getSavedPin() ?: "",
+                        isBiometricAvailable = repository.isBiometricEnabled(),
+                        currentTheme = themeMode,
+                        onThemeSelected = { newTheme ->
+                            repository.setThemeMode(newTheme)
+                            themeMode = newTheme
+                        },
+                        onSuccess = {
+                            triggerHapticFeedback(this@LockActivity, success = true)
+                            isUnlockedAnimTriggered.value = true
+                        },
+                        onBiometricClick = {
+                            showBiometricPrompt()
+                        },
+                        onBackPress = {
+                            exitToHomeScreen()
+                        }
+                    )
+                }
             }
         }
     }
@@ -134,7 +191,8 @@ class LockActivity : FragmentActivity() {
 
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    onUnlockSuccess()
+                    triggerHapticFeedback(this@LockActivity, success = true)
+                    isUnlockedAnimTriggered.value = true
                 }
 
                 override fun onAuthenticationFailed() {
@@ -182,8 +240,30 @@ fun LockScreenContent(
 ) {
     var enteredPin by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
+    val view = androidx.compose.ui.platform.LocalView.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    fun playKeyHaptic() {
+        try {
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+        } catch (e: Exception) {
+            // Graceful fallback
+        }
+    }
 
     val shakeOffset = remember { Animatable(0f) }
+
+    LaunchedEffect(enteredPin) {
+        if (enteredPin.length == savedPin.length) {
+            delay(150)
+            if (enteredPin == savedPin) {
+                onSuccess()
+            } else {
+                triggerHapticFeedback(context, success = false)
+                isError = true
+            }
+        }
+    }
 
     LaunchedEffect(isError) {
         if (isError) {
@@ -286,51 +366,40 @@ fun LockScreenContent(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .offset(x = shakeOffset.value.dp)
-                        .padding(bottom = 20.dp)
+                        .padding(bottom = 8.dp)
                 ) {
                     for (i in 0 until savedPin.length) {
                         val isFilled = i < enteredPin.length
+                        val dotSize by animateDpAsState(
+                            targetValue = if (isFilled) 18.dp else 12.dp,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessLow
+                            ),
+                            label = "dot_size_anim"
+                        )
+                        val dotColor by animateColorAsState(
+                            targetValue = if (isError) Color(0xFFFF5252)
+                            else if (isFilled) colors.textPrimary
+                            else colors.border,
+                            animationSpec = tween(durationMillis = 150),
+                            label = "dot_color_anim"
+                        )
                         Box(
                             modifier = Modifier
-                                .size(16.dp)
-                                .background(
-                                    color = if (isError) Color(0xFFFF5252)
-                                    else if (isFilled) colors.textPrimary
-                                    else colors.border,
-                                    shape = CircleShape
-                                )
-                        )
-                    }
-                }
-
-                // Explicit button to confirm PIN and unlock target app
-                Button(
-                    onClick = {
-                        if (enteredPin == savedPin) {
-                            onSuccess()
-                        } else {
-                            isError = true
+                                .size(18.dp)
+                                .wrapContentSize(Alignment.Center)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(dotSize)
+                                    .background(
+                                        color = dotColor,
+                                        shape = CircleShape
+                                    )
+                            )
                         }
-                    },
-                    enabled = enteredPin.length == savedPin.length,
-                    modifier = Modifier
-                        .widthIn(max = 280.dp)
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("lock_confirm_button"),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.textPrimary,
-                        contentColor = colors.cardBg,
-                        disabledContainerColor = colors.border,
-                        disabledContentColor = colors.textSecondary
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Text(
-                        text = "Confirm & Unlock App",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    }
                 }
             }
 
@@ -354,7 +423,10 @@ fun LockScreenContent(
                             "BIO" -> {
                                 if (isBiometricAvailable) {
                                     IconButton(
-                                        onClick = onBiometricClick,
+                                        onClick = {
+                                            playKeyHaptic()
+                                            onBiometricClick()
+                                        },
                                         modifier = Modifier
                                             .size(72.dp)
                                             .background(colors.accent, CircleShape)
@@ -374,6 +446,7 @@ fun LockScreenContent(
                             "DEL" -> {
                                 IconButton(
                                     onClick = {
+                                        playKeyHaptic()
                                         if (enteredPin.isNotEmpty()) {
                                             enteredPin = enteredPin.dropLast(1)
                                         }
@@ -401,6 +474,7 @@ fun LockScreenContent(
                                         .border(1.dp, colors.border, CircleShape)
                                         .testTag("key_$key")
                                         .clickable {
+                                            playKeyHaptic()
                                             if (enteredPin.length < savedPin.length) {
                                                 enteredPin += key
                                             }
@@ -434,5 +508,31 @@ fun LockScreenContent(
                 }
             }
         }
+    }
+}
+
+fun triggerHapticFeedback(context: Context, success: Boolean) {
+    try {
+        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        if (vibrator != null && vibrator.hasVibrator()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (success) {
+                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(55, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    val timings = longArrayOf(0, 60, 85, 120)
+                    val amplitudes = intArrayOf(0, android.os.VibrationEffect.DEFAULT_AMPLITUDE, 0, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
+                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(timings, amplitudes, -1))
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                if (success) {
+                    vibrator.vibrate(55)
+                } else {
+                    vibrator.vibrate(longArrayOf(0, 60, 85, 120), -1)
+                }
+            }
+        }
+    } catch (e: Exception) {
+        // Safe fallback
     }
 }

@@ -1,6 +1,9 @@
 package com.example
 
 import android.os.Bundle
+import android.os.Build
+import android.content.Context
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -45,16 +48,43 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.example.ui.theme.*
+import com.example.ui.triggerHapticFeedback
+import kotlinx.coroutines.delay
+import androidx.compose.ui.graphics.graphicsLayer
 import com.example.viewmodel.AppItem
 import com.example.viewmodel.AppLockViewModel
 
 class MainActivity : FragmentActivity() {
 
     private lateinit var viewModel: AppLockViewModel
+    private val isGatingUnlockedAnimTriggered = mutableStateOf(false)
+
+    private fun optimizeRefreshRate() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                window.decorView.post {
+                    val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                    val display = display
+                    if (display != null) {
+                        val modes = display.supportedModes
+                        val mode120 = modes.firstOrNull { it.refreshRate >= 110f }
+                        if (mode120 != null) {
+                            val params = window.attributes
+                            params.preferredDisplayModeId = mode120.modeId
+                            window.attributes = params
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore gracefully
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        optimizeRefreshRate()
 
         val factory = AppLockViewModel.Factory(this)
         setContent {
@@ -79,6 +109,24 @@ class MainActivity : FragmentActivity() {
                 val isPinSet by viewModel.isPinSetState.collectAsState()
                 val dashboardUnlocked by viewModel.dashboardUnlocked.collectAsState()
 
+                val isGatingUnlocked = isGatingUnlockedAnimTriggered.value
+                val gatingScale by animateFloatAsState(
+                    targetValue = if (isGatingUnlocked) 0.88f else 1.0f,
+                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                    label = "gating_exit_scale"
+                )
+                val gatingOpacity by animateFloatAsState(
+                    targetValue = if (isGatingUnlocked) 0f else 1.0f,
+                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                    label = "gating_exit_opacity",
+                    finishedListener = {
+                        if (isGatingUnlocked) {
+                            viewModel.markDashboardUnlocked(true)
+                            isGatingUnlockedAnimTriggered.value = false
+                        }
+                    }
+                )
+
                 if (!isPinSet) {
                     PinSetupScreen(
                         themeMode = themeMode,
@@ -88,18 +136,29 @@ class MainActivity : FragmentActivity() {
                         }
                     )
                 } else if (!dashboardUnlocked) {
-                    GatewayAuthenticationScreen(
-                        themeMode = themeMode,
-                        onThemeSelected = { viewModel.setThemeMode(it) },
-                        savedPin = viewModel.getSavedPin(),
-                        isBiometricAvailable = viewModel.isBiometricEnabled.value,
-                        onSuccess = {
-                            viewModel.markDashboardUnlocked(true)
-                        },
-                        onBiometricClick = {
-                            showGatingBiometricPrompt()
-                        }
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(
+                                scaleX = gatingScale,
+                                scaleY = gatingScale,
+                                alpha = gatingOpacity
+                            )
+                    ) {
+                        GatewayAuthenticationScreen(
+                            themeMode = themeMode,
+                            onThemeSelected = { viewModel.setThemeMode(it) },
+                            savedPin = viewModel.getSavedPin(),
+                            isBiometricAvailable = viewModel.isBiometricEnabled.value,
+                            onSuccess = {
+                                triggerHapticFeedback(this@MainActivity, success = true)
+                                isGatingUnlockedAnimTriggered.value = true
+                            },
+                            onBiometricClick = {
+                                showGatingBiometricPrompt()
+                            }
+                        )
+                    }
                     
                     LaunchedEffect(Unit) {
                         if (viewModel.isBiometricEnabled.value) {
@@ -121,7 +180,8 @@ class MainActivity : FragmentActivity() {
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    viewModel.markDashboardUnlocked(true)
+                    triggerHapticFeedback(this@MainActivity, success = true)
+                    isGatingUnlockedAnimTriggered.value = true
                 }
 
                 override fun onAuthenticationFailed() {
@@ -159,6 +219,17 @@ fun PinSetupScreen(
     var secondEntry by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
 
+    val view = androidx.compose.ui.platform.LocalView.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    fun playKeyHaptic() {
+        try {
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+        } catch (e: Exception) {
+            // Graceful fallback
+        }
+    }
+
     val shakeOffset = remember { Animatable(0f) }
 
     LaunchedEffect(isError) {
@@ -174,6 +245,25 @@ fun PinSetupScreen(
     }
 
     val currentInput = if (step == 1) firstEntry else secondEntry
+
+    LaunchedEffect(currentInput) {
+        if (currentInput.length == 4) {
+            delay(150)
+            if (step == 1) {
+                triggerHapticFeedback(context, success = true)
+                step = 2
+            } else {
+                if (firstEntry == secondEntry) {
+                    triggerHapticFeedback(context, success = true)
+                    onPinSaved(secondEntry)
+                } else {
+                    triggerHapticFeedback(context, success = false)
+                    isError = true
+                }
+            }
+        }
+    }
+
     val colors = getThemeColors()
 
     Surface(
@@ -204,7 +294,7 @@ fun PinSetupScreen(
             // Header card section
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(top = 40.dp)
+                modifier = Modifier.padding(top = 16.dp)
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
@@ -220,7 +310,7 @@ fun PinSetupScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
                      text = if (step == 1) "Create Custom PIN" else "Confirm Your PIN",
@@ -229,7 +319,7 @@ fun PinSetupScreen(
                     color = colors.textPrimary
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
                     text = if (step == 1) "Enter a 4-digit PIN to secure your app" else "Confirm your 4-digit security PIN to finalize",
@@ -251,57 +341,40 @@ fun PinSetupScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .offset(x = shakeOffset.value.dp)
-                        .padding(bottom = 20.dp)
+                        .padding(bottom = 8.dp)
                 ) {
                     for (i in 0 until 4) {
                         val isFilled = i < currentInput.length
+                        val dotSize by animateDpAsState(
+                            targetValue = if (isFilled) 18.dp else 12.dp,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessLow
+                            ),
+                            label = "setup_dot_size_anim"
+                        )
+                        val dotColor by animateColorAsState(
+                            targetValue = if (isError) Color(0xFFFF5252)
+                            else if (isFilled) colors.textPrimary
+                            else colors.border,
+                            animationSpec = tween(durationMillis = 150),
+                            label = "setup_dot_color_anim"
+                        )
                         Box(
                             modifier = Modifier
-                                .size(16.dp)
-                                .background(
-                                    color = if (isError) Color(0xFFFF5252)
-                                    else if (isFilled) colors.textPrimary
-                                    else colors.border,
-                                    shape = CircleShape
-                                )
-                        )
-                    }
-                }
-
-                // Explicit button to confirm PIN setup entry
-                Button(
-                    onClick = {
-                        if (currentInput.length == 4) {
-                            if (step == 1) {
-                                step = 2
-                            } else {
-                                if (firstEntry == secondEntry) {
-                                    onPinSaved(secondEntry)
-                                } else {
-                                    isError = true
-                                }
-                            }
+                                .size(18.dp)
+                                .wrapContentSize(Alignment.Center)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(dotSize)
+                                    .background(
+                                        color = dotColor,
+                                        shape = CircleShape
+                                    )
+                            )
                         }
-                    },
-                    enabled = currentInput.length == 4,
-                    modifier = Modifier
-                        .widthIn(max = 280.dp)
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("pin_confirm_button"),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.textPrimary,
-                        contentColor = colors.cardBg,
-                        disabledContainerColor = colors.border,
-                        disabledContentColor = colors.textSecondary
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Text(
-                        text = if (step == 1) "Continue" else "Confirm & Save PIN",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    }
                 }
             }
 
@@ -328,6 +401,7 @@ fun PinSetupScreen(
                             "DEL" -> {
                                 IconButton(
                                     onClick = {
+                                        playKeyHaptic()
                                         if (currentInput.isNotEmpty()) {
                                             if (step == 1) {
                                                 firstEntry = firstEntry.dropLast(1)
@@ -359,6 +433,7 @@ fun PinSetupScreen(
                                         .border(1.dp, colors.border, CircleShape)
                                         .testTag("key_$key")
                                         .clickable {
+                                            playKeyHaptic()
                                             if (currentInput.length < 4) {
                                                 val added = currentInput + key
                                                 if (step == 1) {
@@ -397,6 +472,28 @@ fun GatewayAuthenticationScreen(
 ) {
     var enteredPin by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
+    val view = androidx.compose.ui.platform.LocalView.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    LaunchedEffect(enteredPin) {
+        if (enteredPin.length == 4) {
+            delay(150)
+            if (enteredPin == savedPin) {
+                onSuccess()
+            } else {
+                triggerHapticFeedback(context, success = false)
+                isError = true
+            }
+        }
+    }
+
+    fun playKeyHaptic() {
+        try {
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+        } catch (e: Exception) {
+            // Graceful fallback
+        }
+    }
 
     val shakeOffset = remember { Animatable(0f) }
 
@@ -457,7 +554,7 @@ fun GatewayAuthenticationScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
                     text = "Console Access Gated",
@@ -466,7 +563,7 @@ fun GatewayAuthenticationScreen(
                     color = colors.textPrimary
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
                     text = "Verify credentials to edit App Lock parameters",
@@ -487,51 +584,40 @@ fun GatewayAuthenticationScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .offset(x = shakeOffset.value.dp)
-                        .padding(bottom = 20.dp)
+                        .padding(bottom = 8.dp)
                 ) {
                     for (i in 0 until 4) {
                         val isFilled = i < enteredPin.length
+                        val dotSize by animateDpAsState(
+                            targetValue = if (isFilled) 18.dp else 12.dp,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessLow
+                            ),
+                            label = "gate_dot_size_anim"
+                        )
+                        val dotColor by animateColorAsState(
+                            targetValue = if (isError) Color(0xFFFF5252)
+                            else if (isFilled) colors.textPrimary
+                            else colors.border,
+                            animationSpec = tween(durationMillis = 150),
+                            label = "gate_dot_color_anim"
+                        )
                         Box(
                             modifier = Modifier
-                                .size(16.dp)
-                                .background(
-                                    color = if (isError) Color(0xFFFF5252)
-                                    else if (isFilled) colors.textPrimary
-                                    else colors.border,
-                                    shape = CircleShape
-                                )
-                        )
-                    }
-                }
-
-                // Explicit button to confirm PIN and enter app/console
-                Button(
-                    onClick = {
-                        if (enteredPin == savedPin) {
-                            onSuccess()
-                        } else {
-                            isError = true
+                                .size(18.dp)
+                                .wrapContentSize(Alignment.Center)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(dotSize)
+                                    .background(
+                                        color = dotColor,
+                                        shape = CircleShape
+                                    )
+                            )
                         }
-                    },
-                    enabled = enteredPin.length == 4,
-                    modifier = Modifier
-                        .widthIn(max = 280.dp)
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("gate_confirm_button"),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.textPrimary,
-                        contentColor = colors.cardBg,
-                        disabledContainerColor = colors.border,
-                        disabledContentColor = colors.textSecondary
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Text(
-                        text = "Confirm & Enter App",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    }
                 }
             }
 
@@ -555,7 +641,10 @@ fun GatewayAuthenticationScreen(
                             "BIO" -> {
                                 if (isBiometricAvailable) {
                                     IconButton(
-                                        onClick = onBiometricClick,
+                                        onClick = {
+                                            playKeyHaptic()
+                                            onBiometricClick()
+                                        },
                                         modifier = Modifier
                                             .size(60.dp)
                                             .background(colors.accent, CircleShape)
@@ -575,6 +664,7 @@ fun GatewayAuthenticationScreen(
                             "DEL" -> {
                                 IconButton(
                                     onClick = {
+                                        playKeyHaptic()
                                         if (enteredPin.isNotEmpty()) {
                                             enteredPin = enteredPin.dropLast(1)
                                         }
@@ -602,6 +692,7 @@ fun GatewayAuthenticationScreen(
                                         .border(1.dp, colors.border, CircleShape)
                                         .testTag("key_$key")
                                         .clickable {
+                                            playKeyHaptic()
                                             if (enteredPin.length < 4) {
                                                 enteredPin += key
                                             }
@@ -626,7 +717,19 @@ fun GatewayAuthenticationScreen(
 // ---------------------- Main Secured Dashboard Console ----------------------
 @Composable
 fun MainConsoleDashboard(viewModel: AppLockViewModel) {
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: Settings & Status, 1: Application Locks
+    val hasUsageStats by viewModel.hasUsageStatsPermission.collectAsState()
+    val hasOverlay by viewModel.hasOverlayPermission.collectAsState()
+
+    var selectedTab by remember {
+        mutableIntStateOf(if (hasUsageStats && hasOverlay) 1 else 0)
+    }
+
+    LaunchedEffect(hasUsageStats, hasOverlay) {
+        if (hasUsageStats && hasOverlay) {
+            selectedTab = 1
+        }
+    }
+
     val colors = getThemeColors()
 
     Scaffold(
@@ -678,7 +781,11 @@ fun MainConsoleDashboard(viewModel: AppLockViewModel) {
                 .background(colors.background)
         ) {
             // Elegant Header Section of "High Density" spec
-            HeaderSection(viewModel = viewModel)
+            HeaderSection(
+                viewModel = viewModel,
+                selectedTab = selectedTab,
+                onTabSelected = { selectedTab = it }
+            )
 
             Surface(
                 modifier = Modifier.fillMaxSize(),
@@ -687,7 +794,13 @@ fun MainConsoleDashboard(viewModel: AppLockViewModel) {
                 AnimatedContent(
                     targetState = selectedTab,
                     transitionSpec = {
-                        fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(220))
+                        if (targetState > initialState) {
+                            (slideInHorizontally(animationSpec = spring(stiffness = Spring.StiffnessLow)) { width -> width / 3 } + fadeIn(animationSpec = tween(300)))
+                                .togetherWith(slideOutHorizontally(animationSpec = spring(stiffness = Spring.StiffnessLow)) { width -> -width / 3 } + fadeOut(animationSpec = tween(300)))
+                        } else {
+                            (slideInHorizontally(animationSpec = spring(stiffness = Spring.StiffnessLow)) { width -> -width / 3 } + fadeIn(animationSpec = tween(300)))
+                                .togetherWith(slideOutHorizontally(animationSpec = spring(stiffness = Spring.StiffnessLow)) { width -> width / 3 } + fadeOut(animationSpec = tween(300)))
+                        }
                     },
                     label = "dashboard_tab_transition"
                 ) { targetTab ->
@@ -703,8 +816,11 @@ fun MainConsoleDashboard(viewModel: AppLockViewModel) {
 
 // Dedicated High Density Header Section matching HTML spec
 @Composable
-fun HeaderSection(viewModel: AppLockViewModel) {
-    val themeMode by viewModel.themeMode.collectAsState()
+fun HeaderSection(
+    viewModel: AppLockViewModel,
+    selectedTab: Int,
+    onTabSelected: (Int) -> Unit
+) {
     val colors = getThemeColors()
     Row(
         modifier = Modifier
@@ -723,13 +839,77 @@ fun HeaderSection(viewModel: AppLockViewModel) {
                 modifier = Modifier.testTag("dashboard_title")
             )
         }
-        
-        ThemeSelectorRow(
-            currentTheme = themeMode,
-            onThemeSelected = { newTheme ->
-                viewModel.setThemeMode(newTheme)
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // App Locker Screen Block Button
+            val isLockerSelected = selectedTab == 1
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        if (isLockerSelected) colors.textPrimary.copy(alpha = 0.15f)
+                        else colors.cardBg
+                    )
+                    .border(
+                        1.dp,
+                        if (isLockerSelected) colors.textPrimary.copy(alpha = 0.35f) else colors.border,
+                        RoundedCornerShape(12.dp)
+                    )
+                    .then(
+                        if (!isLockerSelected) {
+                            Modifier.clickable { onTabSelected(1) }
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .testTag("header_nav_locker"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = "App Locker Tab",
+                    tint = if (isLockerSelected) colors.textPrimary else colors.textSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
             }
-        )
+
+            // Settings/Setup Screen Block Button
+            val isSettingsSelected = selectedTab == 0
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        if (isSettingsSelected) colors.textPrimary.copy(alpha = 0.15f)
+                        else colors.cardBg
+                    )
+                    .border(
+                        1.dp,
+                        if (isSettingsSelected) colors.textPrimary.copy(alpha = 0.35f) else colors.border,
+                        RoundedCornerShape(12.dp)
+                    )
+                    .then(
+                        if (!isSettingsSelected) {
+                            Modifier.clickable { onTabSelected(0) }
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .testTag("header_nav_settings"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = "Settings Tab",
+                    tint = if (isSettingsSelected) colors.textPrimary else colors.textSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
     }
 }
 
@@ -956,6 +1136,43 @@ fun SettingsAndStatusTab(viewModel: AppLockViewModel) {
             }
         }
 
+        // App Theme Selector in One Block matching HTML spec
+        item {
+            val themeMode by viewModel.themeMode.collectAsState()
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.cardBg),
+                border = BorderStroke(1.dp, colors.border),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(1.dp, RoundedCornerShape(24.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "App Color Theme",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = colors.textPrimary
+                    )
+                    Text(
+                        text = "Customize application display. Choosing Light, Dark, or System mode to adjust visual appearance.",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary
+                    )
+                    ThemeSelectorRow(
+                        currentTheme = themeMode,
+                        onThemeSelected = { newTheme ->
+                            viewModel.setThemeMode(newTheme)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
         item {
             Spacer(modifier = Modifier.height(30.dp))
         }
@@ -1140,14 +1357,13 @@ fun ApplicationLocksTab(viewModel: AppLockViewModel) {
     val displayedApps by viewModel.uiAppState.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
 
-    // 0: All progress/status, 1: Locked Only, 2: System/Others
+    // 0: All apps, 1: Locked Only
     var filterCategoryIndex by remember { mutableIntStateOf(0) }
     val colors = getThemeColors()
 
     val filteredApps = remember(displayedApps, filterCategoryIndex) {
         when (filterCategoryIndex) {
             1 -> displayedApps.filter { it.isLocked }
-            2 -> displayedApps.filter { !it.isLocked }
             else -> displayedApps
         }
     }
@@ -1187,7 +1403,7 @@ fun ApplicationLocksTab(viewModel: AppLockViewModel) {
             singleLine = true
         )
 
-        // HTML specular category pills
+        // HTML specular category pills styled with equal weights
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
@@ -1198,19 +1414,13 @@ fun ApplicationLocksTab(viewModel: AppLockViewModel) {
                 label = "All Apps",
                 isSelected = filterCategoryIndex == 0,
                 onClick = { filterCategoryIndex = 0 },
-                modifier = Modifier.testTag("filter_all")
+                modifier = Modifier.weight(1f).testTag("filter_all")
             )
             CategoryTabPill(
                 label = "Locked",
                 isSelected = filterCategoryIndex == 1,
                 onClick = { filterCategoryIndex = 1 },
-                modifier = Modifier.testTag("filter_locked")
-            )
-            CategoryTabPill(
-                label = "System",
-                isSelected = filterCategoryIndex == 2,
-                onClick = { filterCategoryIndex = 2 },
-                modifier = Modifier.testTag("filter_unlocked")
+                modifier = Modifier.weight(1f).testTag("filter_locked")
             )
         }
 
@@ -1342,15 +1552,26 @@ fun AppItemRow(
                 modifier = Modifier.weight(1f)
             ) {
                 // Customized back color round box for High Density listing items
-                val softIconBackground = remember(appItem.appName) {
+                val isDark = colors.background == HDPrimaryDark
+                val softIconBackground = remember(appItem.appName, isDark) {
                     val hash = appItem.appName.hashCode().coerceAtLeast(0)
-                    val choices = listOf(
-                        Color(0xFFE8F1FF), // Light Blue
-                        Color(0xFFFDE8EF), // Light Pink
-                        Color(0xFFFFF7E1), // Light Yellow/Amber
-                        Color(0xFFE6F4EA)  // Light Green
-                    )
-                    choices[hash % choices.size]
+                    if (isDark) {
+                        val choices = listOf(
+                            Color(0x1CE8F1FF), // Elegant semi-transparent pastels for dark mode
+                            Color(0x1CFDE8EF),
+                            Color(0x1CFFF7E1),
+                            Color(0x1CE6F4EA)
+                        )
+                        choices[hash % choices.size]
+                    } else {
+                        val choices = listOf(
+                            Color(0xFFE8F1FF), // Vibrant light pastels for light mode
+                            Color(0xFFFDE8EF),
+                            Color(0xFFFFF7E1),
+                            Color(0xFFE6F4EA)
+                        )
+                        choices[hash % choices.size]
+                    }
                 }
 
                 Box(

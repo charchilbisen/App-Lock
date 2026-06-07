@@ -26,6 +26,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.testTag
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.Settings
@@ -64,7 +68,7 @@ fun getThemeColors(): ThemeColors {
         textSecondary = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
         border = if (isDark) Color(0xFF334155) else Color(0xFFE2E8F0),
         cardBg = if (isDark) Color(0xFF1E2230) else Color(0xFFFFFFFF),
-        accent = HDAccentLightBlue
+        accent = if (isDark) Color(0xFF0F3255) else HDAccentLightBlue
     )
 }
 
@@ -143,19 +147,32 @@ fun ThemeSelectorRow(
             val isSelected = currentTheme == mode
             Box(
                 modifier = Modifier
+                    .weight(1f)
                     .clip(RoundedCornerShape(16.dp))
                     .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
                     .clickable { onThemeSelected(mode) }
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .padding(vertical = 8.dp)
                     .testTag("theme_btn_$mode"),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = desc,
-                    tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = desc,
+                        tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = desc,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
