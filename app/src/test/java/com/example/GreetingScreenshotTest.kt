@@ -21,7 +21,7 @@ class GreetingScreenshotTest {
 
   @Test
   fun greeting_screenshot() {
-    composeTestRule.setContent { MyApplicationTheme { PinSetupScreen(onPinSaved = {}) } }
+    composeTestRule.setContent { MyApplicationTheme { PinSetupScreen(themeMode = "SYSTEM", onThemeSelected = {}, onPinSaved = {}) } }
 
     composeTestRule.onRoot().captureRoboImage(filePath = "src/test/screenshots/greeting.png")
   }

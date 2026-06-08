@@ -14,6 +14,7 @@ class AppLockRepository private constructor(private val context: Context) {
     // In-memory cache for packages that have been unlocked by the user.
     // Maps Package Name -> Expiration Timestamp (epoch millis)
     private val unlockedAppsCache = ConcurrentHashMap<String, Long>()
+    private val minimizedAppsCache = ConcurrentHashMap<String, Long>()
 
     // Expose Room flow
     val lockedAppsFlow: Flow<List<LockedApp>> = dao.getAllLockedAppsFlow()
@@ -46,6 +47,27 @@ class AppLockRepository private constructor(private val context: Context) {
         return getSavedPin() != null
     }
 
+    // Security Question management
+    fun getSecurityQuestion(): String? {
+        return prefs.getString("security_question", null)
+    }
+
+    fun saveSecurityQuestion(question: String) {
+        prefs.edit().putString("security_question", question).apply()
+    }
+
+    fun getSecurityAnswer(): String? {
+        return prefs.getString("security_answer", null)
+    }
+
+    fun saveSecurityAnswer(answer: String) {
+        prefs.edit().putString("security_answer", answer).apply()
+    }
+
+    fun isSecurityQuestionSet(): Boolean {
+        return getSecurityQuestion() != null && getSecurityAnswer() != null
+    }
+
     // Biometric configurations
     fun isBiometricEnabled(): Boolean {
         return prefs.getBoolean("biometric_enabled", false)
@@ -73,22 +95,66 @@ class AppLockRepository private constructor(private val context: Context) {
         prefs.edit().putString("theme_mode", mode).apply()
     }
 
+    // Configurable Lock Delay settings in seconds
+    fun getLockDelaySeconds(): Int {
+        return prefs.getInt("lock_delay_seconds", 0)
+    }
+
+    fun setLockDelaySeconds(seconds: Int) {
+        prefs.edit().putInt("lock_delay_seconds", seconds).apply()
+    }
+
     // Temporary unlock mechanism for user convenience so loops don't lock them.
     // Kept unlocked until they exit the app or lock the screen.
     fun isTemporarilyUnlocked(packageName: String): Boolean {
-        return unlockedAppsCache.containsKey(packageName)
+        val unlockedAt = unlockedAppsCache[packageName] ?: return false
+        val delaySec = getLockDelaySeconds()
+        if (delaySec <= 0) {
+            return true
+        }
+        val minimizeTime = minimizedAppsCache[packageName] ?: return true
+        val elapsed = System.currentTimeMillis() - minimizeTime
+        if (elapsed < delaySec * 1000L) {
+            minimizedAppsCache.remove(packageName)
+            return true
+        } else {
+            unlockedAppsCache.remove(packageName)
+            minimizedAppsCache.remove(packageName)
+            return false
+        }
     }
 
     fun markTemporarilyUnlocked(packageName: String, durationMillis: Long = 15000) {
         unlockedAppsCache[packageName] = System.currentTimeMillis()
+        minimizedAppsCache.remove(packageName)
     }
 
     fun revokeTemporaryUnlock(packageName: String) {
-        unlockedAppsCache.remove(packageName)
+        val delaySec = getLockDelaySeconds()
+        if (delaySec <= 0) {
+            unlockedAppsCache.remove(packageName)
+            minimizedAppsCache.remove(packageName)
+        } else {
+            minimizedAppsCache[packageName] = System.currentTimeMillis()
+        }
     }
 
     fun clearTemporaryUnlockCache() {
         unlockedAppsCache.clear()
+        minimizedAppsCache.clear()
+    }
+
+    fun clearTemporaryUnlockCacheOnScreenOff() {
+        val delaySec = getLockDelaySeconds()
+        if (delaySec <= 0) {
+            unlockedAppsCache.clear()
+            minimizedAppsCache.clear()
+        } else {
+            val now = System.currentTimeMillis()
+            unlockedAppsCache.keys.forEach { packageName ->
+                minimizedAppsCache.putIfAbsent(packageName, now)
+            }
+        }
     }
 
     companion object {

@@ -81,9 +81,34 @@ class AppLockViewModel(private val context: Context) : ViewModel() {
     private val _themeMode = MutableStateFlow(repository.getThemeMode())
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
+    private val _lockDelaySeconds = MutableStateFlow(repository.getLockDelaySeconds())
+    val lockDelaySeconds: StateFlow<Int> = _lockDelaySeconds.asStateFlow()
+
+    private val _securityQuestion = MutableStateFlow(repository.getSecurityQuestion())
+    val securityQuestion: StateFlow<String?> = _securityQuestion.asStateFlow()
+
+    private val _securityAnswer = MutableStateFlow(repository.getSecurityAnswer())
+    val securityAnswer: StateFlow<String?> = _securityAnswer.asStateFlow()
+
     fun setThemeMode(mode: String) {
         repository.setThemeMode(mode)
         _themeMode.value = mode
+    }
+
+    fun setLockDelaySeconds(seconds: Int) {
+        repository.setLockDelaySeconds(seconds)
+        _lockDelaySeconds.value = seconds
+    }
+
+    fun saveSecurityQuestionAndAnswer(question: String, answer: String) {
+        repository.saveSecurityQuestion(question)
+        repository.saveSecurityAnswer(answer)
+        _securityQuestion.value = question
+        _securityAnswer.value = answer
+    }
+
+    fun isSecurityQuestionSet(): Boolean {
+        return repository.isSecurityQuestionSet()
     }
 
     init {

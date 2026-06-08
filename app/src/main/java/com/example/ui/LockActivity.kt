@@ -28,6 +28,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Backspace
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material.icons.filled.NightlightRound
+import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -102,14 +106,27 @@ class LockActivity : FragmentActivity() {
         setContent {
             var themeMode by remember { mutableStateOf(repository.getThemeMode()) }
             val isUnlocked = isUnlockedAnimTriggered.value
+            var isEntered by remember { mutableStateOf(false) }
+
+            LaunchedEffect(Unit) {
+                isEntered = true
+            }
 
             val scale by animateFloatAsState(
-                targetValue = if (isUnlocked) 0.88f else 1.0f,
+                targetValue = when {
+                    isUnlocked -> 0.88f
+                    !isEntered -> 0.95f
+                    else -> 1.0f
+                },
                 animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
                 label = "exit_scale"
             )
             val opacity by animateFloatAsState(
-                targetValue = if (isUnlocked) 0f else 1.0f,
+                targetValue = when {
+                    isUnlocked -> 0f
+                    !isEntered -> 0f
+                    else -> 1.0f
+                },
                 animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
                 label = "exit_opacity",
                 finishedListener = {
@@ -244,11 +261,7 @@ fun LockScreenContent(
     val context = androidx.compose.ui.platform.LocalContext.current
 
     fun playKeyHaptic() {
-        try {
-            view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
-        } catch (e: Exception) {
-            // Graceful fallback
-        }
+        // Disabled as requested
     }
 
     val shakeOffset = remember { Animatable(0f) }
@@ -292,16 +305,76 @@ fun LockScreenContent(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top Theme Selector Row
+            // Top Action Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                ThemeSelectorRow(
-                    currentTheme = currentTheme,
-                    onThemeSelected = onThemeSelected
-                )
+                // Left Icon Box: Open App Lock App
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.cardBg)
+                        .border(1.dp, colors.border, RoundedCornerShape(12.dp))
+                        .clickable {
+                            try {
+                                val intent = Intent(context, com.example.MainActivity::class.java).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                }
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                        .testTag("lock_open_app_lock_app"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Open App Lock Control Panel",
+                        tint = colors.textPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                // Right Icon Box: Theme Selector
+                val themeIcon = when (currentTheme) {
+                    "LIGHT" -> Icons.Filled.WbSunny
+                    "DARK" -> Icons.Filled.NightlightRound
+                    else -> Icons.Filled.BrightnessMedium
+                }
+                val themeDesc = when (currentTheme) {
+                    "LIGHT" -> "Light Theme"
+                    "DARK" -> "Dark Theme"
+                    else -> "System Auto Theme"
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.cardBg)
+                        .border(1.dp, colors.border, RoundedCornerShape(12.dp))
+                        .clickable {
+                            val nextTheme = when (currentTheme) {
+                                "LIGHT" -> "DARK"
+                                "DARK" -> "SYSTEM"
+                                else -> "LIGHT"
+                            }
+                            onThemeSelected(nextTheme)
+                        }
+                        .testTag("lock_theme_toggle"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = themeIcon,
+                        contentDescription = "$themeDesc (Click to Cycle)",
+                        tint = colors.textPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
 
             // Header: Locked Screen Banner Card
@@ -494,17 +567,60 @@ fun LockScreenContent(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Exit protection
-                TextButton(
-                    onClick = onBackPress,
-                    modifier = Modifier.height(48.dp)
+                // Exit & Reset Option row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Exit Secured App",
-                        color = Color(0xFFFF5252),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
-                    )
+                    val repository = remember { com.example.data.AppLockRepository.getInstance(context) }
+                    val sQuestion = remember { repository.getSecurityQuestion() }
+                    val sAnswer = remember { repository.getSecurityAnswer() }
+                    var showResetDialog by remember { mutableStateOf(false) }
+
+                    if (sQuestion != null && sAnswer != null) {
+                        TextButton(
+                            onClick = { showResetDialog = true },
+                            modifier = Modifier.height(48.dp)
+                        ) {
+                            Text(
+                                text = "Forgot PIN? 🔑",
+                                color = colors.textPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
+                        }
+
+                        if (showResetDialog) {
+                            ForgotPasswordResetDialog(
+                                securityQuestion = sQuestion,
+                                correctAnswer = sAnswer,
+                                onDismiss = { showResetDialog = false },
+                                onResetSuccess = { newPin ->
+                                    repository.savePin(newPin)
+                                    showResetDialog = false
+                                    onSuccess() // instantly unlocks target app!
+                                    android.widget.Toast.makeText(context, "PIN Reset Successfully & Unlocked! 🚀", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+
+                    TextButton(
+                        onClick = onBackPress,
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Text(
+                            text = "Exit Secured App 🚪",
+                            color = Color(0xFFFF5252),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                    }
                 }
             }
         }
@@ -512,27 +628,181 @@ fun LockScreenContent(
 }
 
 fun triggerHapticFeedback(context: Context, success: Boolean) {
+    // Disabled keyboard and unlock vibrations as requested
+}
+
+fun triggerLockToggleVibration(context: Context) {
     try {
         val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
         if (vibrator != null && vibrator.hasVibrator()) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (success) {
-                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(55, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    val timings = longArrayOf(0, 60, 85, 120)
-                    val amplitudes = intArrayOf(0, android.os.VibrationEffect.DEFAULT_AMPLITUDE, 0, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
-                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(timings, amplitudes, -1))
-                }
+                vibrator.vibrate(android.os.VibrationEffect.createOneShot(55, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
                 @Suppress("DEPRECATION")
-                if (success) {
-                    vibrator.vibrate(55)
-                } else {
-                    vibrator.vibrate(longArrayOf(0, 60, 85, 120), -1)
-                }
+                vibrator.vibrate(55)
             }
         }
     } catch (e: Exception) {
         // Safe fallback
     }
+}
+
+@Composable
+fun ForgotPasswordResetDialog(
+    securityQuestion: String,
+    correctAnswer: String,
+    onDismiss: () -> Unit,
+    onResetSuccess: (String) -> Unit
+) {
+    val colors = getThemeColors()
+    var answerInput by remember { mutableStateOf("") }
+    
+    // State for setting new PIN once answer is correct
+    var step by remember { mutableStateOf(1) } // 1: Verify Answer, 2: Enter New PIN, 3: Confirm New PIN
+    var newPin1 by remember { mutableStateOf("") }
+    var newPin2 by remember { mutableStateOf("") }
+    
+    var errorMsg by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = if (step == 1) "Verify Security Answer 🛡️" else "Reset Security PIN 🔄",
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+                fontSize = 18.sp
+            )
+        },
+        containerColor = colors.cardBg,
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (step == 1) {
+                    Text(
+                        text = "Question: $securityQuestion",
+                        color = colors.textPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp
+                    )
+
+                    OutlinedTextField(
+                        value = answerInput,
+                        onValueChange = { 
+                            answerInput = it 
+                            errorMsg = ""
+                        },
+                        placeholder = { Text("Your answer...", color = colors.textSecondary) },
+                        singleLine = true,
+                        isError = errorMsg.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = colors.textPrimary,
+                            unfocusedTextColor = colors.textPrimary,
+                            focusedBorderColor = colors.textPrimary,
+                            unfocusedBorderColor = colors.border
+                        )
+                    )
+
+                    if (errorMsg.isNotEmpty()) {
+                        Text(
+                            text = errorMsg,
+                            color = Color(0xFFFF5252),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                } else {
+                    Text(
+                        text = if (step == 2) "Type your new 4-digit PIN 🔐" else "Confirm your new 4-digit PIN 🔄",
+                        color = colors.textSecondary,
+                        fontSize = 14.sp
+                    )
+
+                    OutlinedTextField(
+                        value = if (step == 2) newPin1 else newPin2,
+                        onValueChange = { input ->
+                            if (input.length <= 4 && input.all { it.isDigit() }) {
+                                if (step == 2) newPin1 = input else newPin2 = input
+                                errorMsg = ""
+                            }
+                        },
+                        placeholder = { Text("xxxx", color = colors.textSecondary) },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        ),
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        isError = errorMsg.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = colors.textPrimary,
+                            unfocusedTextColor = colors.textPrimary,
+                            focusedBorderColor = colors.textPrimary,
+                            unfocusedBorderColor = colors.border
+                        )
+                    )
+
+                    if (errorMsg.isNotEmpty()) {
+                        Text(
+                            text = errorMsg,
+                            color = Color(0xFFFF5252),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = colors.textSecondary)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (step == 1) {
+                        if (answerInput.trim().equals(correctAnswer.trim(), ignoreCase = true)) {
+                            step = 2
+                            errorMsg = ""
+                        } else {
+                            errorMsg = "Incorrect answer! Please try again. 😢"
+                        }
+                    } else if (step == 2) {
+                        if (newPin1.length == 4) {
+                            step = 3
+                            errorMsg = ""
+                        } else {
+                            errorMsg = "PIN must be exactly 4 digits."
+                        }
+                    } else {
+                        if (newPin1 == newPin2) {
+                            onResetSuccess(newPin1)
+                        } else {
+                            errorMsg = "PIN choices do not match. Try again."
+                            step = 2
+                            newPin1 = ""
+                            newPin2 = ""
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.textPrimary,
+                    contentColor = colors.cardBg
+                )
+            ) {
+                Text(
+                    text = when (step) {
+                        1 -> "Verify 🗝️"
+                        2 -> "Continue ➡️"
+                        else -> "Save & Unlock 🚀"
+                    },
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    )
 }

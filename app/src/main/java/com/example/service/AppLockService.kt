@@ -31,8 +31,8 @@ class AppLockService : Service() {
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                Log.d("AppLockService", "Screen turned off. Clearing all unlocked apps cache.")
-                repository.clearTemporaryUnlockCache()
+                Log.d("AppLockService", "Screen turned off. Clearing all unlocked apps cache with delay handler.")
+                repository.clearTemporaryUnlockCacheOnScreenOff()
                 lastActiveUserApp = null
             }
         }
@@ -159,21 +159,27 @@ class AppLockService : Service() {
     }
 
     private suspend fun handleForegroundApp(packageName: String) {
-        // Essential Guard: Never lock our own application, launcher launcher UI, or system components
-        val systemApps = listOf(
-            packageName == this.packageName,
-            packageName == "com.android.systemui",
-            packageName == "android",
-            packageName.contains("launcher"),
-            packageName == "com.google.android.googlequicksearchbox"
-        )
-        if (systemApps.contains(true)) {
+        // Essential Guard: Never lock our own application, launcher UI, or standard system components
+        val isOurApp = packageName == this.packageName
+        val isSystemIgnored = packageName == "com.android.systemui" ||
+                packageName == "android" ||
+                packageName.contains("launcher") ||
+                packageName == "com.google.android.googlequicksearchbox"
+
+        if (isOurApp || isSystemIgnored) {
             return
         }
 
-        // Check if the service is marked as active in pref, and if this app is locked in database
-        if (repository.isServiceActive() && repository.isAppLocked(packageName)) {
-            // Check if this app has already been authorized or temporally unlocked
+        // Uninstallation & Clearing Protection: Lock Settings and Package Installers so they require PIN
+        val isProtectedUninstallApp = packageName == "com.android.settings" ||
+                packageName == "com.android.packageinstaller" ||
+                packageName == "com.google.android.packageinstaller" ||
+                packageName == "com.sec.android.app.packageinstaller"
+
+        val shouldLock = repository.isServiceActive() && (isProtectedUninstallApp || repository.isAppLocked(packageName))
+
+        if (shouldLock) {
+            // Check if this app has already been authorized or temporarily unlocked
             if (!repository.isTemporarilyUnlocked(packageName)) {
                 // If not unlocked, start LockActivity overlay screen
                 launchLockScreen(packageName)

@@ -49,6 +49,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.example.ui.theme.*
 import com.example.ui.triggerHapticFeedback
+import com.example.ui.triggerLockToggleVibration
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.graphicsLayer
 import com.example.viewmodel.AppItem
@@ -131,7 +132,8 @@ class MainActivity : FragmentActivity() {
                     PinSetupScreen(
                         themeMode = themeMode,
                         onThemeSelected = { viewModel.setThemeMode(it) },
-                        onPinSaved = { pin ->
+                        onPinSaved = { pin, question, answer ->
+                            viewModel.saveSecurityQuestionAndAnswer(question, answer)
                             viewModel.savePin(pin)
                         }
                     )
@@ -212,22 +214,22 @@ class MainActivity : FragmentActivity() {
 fun PinSetupScreen(
     themeMode: String,
     onThemeSelected: (String) -> Unit,
-    onPinSaved: (String) -> Unit
+    onPinSaved: (String, String, String) -> Unit
 ) {
-    var step by remember { mutableIntStateOf(1) } // 1: Enter PIN, 2: Confirm PIN
+    var step by remember { mutableIntStateOf(1) } // 1: Enter PIN, 2: Confirm PIN, 3: Security Question Setup
     var firstEntry by remember { mutableStateOf("") }
     var secondEntry by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
+
+    var selectedQuestionIndex by remember { mutableIntStateOf(0) }
+    var answerText by remember { mutableStateOf("") }
+    var questionDropdownExpanded by remember { mutableStateOf(false) }
 
     val view = androidx.compose.ui.platform.LocalView.current
     val context = androidx.compose.ui.platform.LocalContext.current
 
     fun playKeyHaptic() {
-        try {
-            view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
-        } catch (e: Exception) {
-            // Graceful fallback
-        }
+        // Disabled as requested
     }
 
     val shakeOffset = remember { Animatable(0f) }
@@ -252,10 +254,10 @@ fun PinSetupScreen(
             if (step == 1) {
                 triggerHapticFeedback(context, success = true)
                 step = 2
-            } else {
+            } else if (step == 2) {
                 if (firstEntry == secondEntry) {
                     triggerHapticFeedback(context, success = true)
-                    onPinSaved(secondEntry)
+                    step = 3
                 } else {
                     triggerHapticFeedback(context, success = false)
                     isError = true
@@ -285,10 +287,41 @@ fun PinSetupScreen(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                ThemeSelectorRow(
-                    currentTheme = themeMode,
-                    onThemeSelected = onThemeSelected
-                )
+                val themeIcon = when (themeMode) {
+                    "LIGHT" -> Icons.Filled.WbSunny
+                    "DARK" -> Icons.Filled.NightlightRound
+                    else -> Icons.Filled.BrightnessMedium
+                }
+                val themeDesc = when (themeMode) {
+                    "LIGHT" -> "Light Theme"
+                    "DARK" -> "Dark Theme"
+                    else -> "System Auto Theme"
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.cardBg)
+                        .border(1.dp, colors.border, RoundedCornerShape(12.dp))
+                        .clickable {
+                            val nextTheme = when (themeMode) {
+                                "LIGHT" -> "DARK"
+                                "DARK" -> "SYSTEM"
+                                else -> "LIGHT"
+                            }
+                            onThemeSelected(nextTheme)
+                        }
+                        .testTag("pin_setup_theme_toggle"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = themeIcon,
+                        contentDescription = "$themeDesc (Click to Cycle)",
+                        tint = colors.textPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
 
             // Header card section
@@ -313,16 +346,24 @@ fun PinSetupScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                     text = if (step == 1) "Create Custom PIN" else "Confirm Your PIN",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.textPrimary
+                     text = when (step) {
+                         1 -> "Create Custom PIN 🔐"
+                         2 -> "Confirm Your PIN 🔄"
+                         else -> "Set Security Question 🛡️"
+                     },
+                     fontSize = 22.sp,
+                     fontWeight = FontWeight.Bold,
+                     color = colors.textPrimary
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
-                    text = if (step == 1) "Enter a 4-digit PIN to secure your app" else "Confirm your 4-digit security PIN to finalize",
+                    text = when (step) {
+                        1 -> "Enter an elegant 4-digit PIN to secure your applet dashboard."
+                        2 -> "Confirm your 4-digit security PIN to finalize."
+                        else -> "This question helps you recover and reset your PIN if you ever forget it."
+                    },
                     fontSize = 14.sp,
                     color = colors.textSecondary,
                     textAlign = TextAlign.Center,
@@ -330,129 +371,266 @@ fun PinSetupScreen(
                 )
             }
 
-            // PIN Dots and Setup Confirmation Button Group
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.padding(vertical = 12.dp)
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .offset(x = shakeOffset.value.dp)
-                        .padding(bottom = 8.dp)
+            // PIN Dots section (only shown on steps 1 and 2)
+            if (step < 3) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(vertical = 12.dp)
                 ) {
-                    for (i in 0 until 4) {
-                        val isFilled = i < currentInput.length
-                        val dotSize by animateDpAsState(
-                            targetValue = if (isFilled) 18.dp else 12.dp,
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessLow
-                            ),
-                            label = "setup_dot_size_anim"
-                        )
-                        val dotColor by animateColorAsState(
-                            targetValue = if (isError) Color(0xFFFF5252)
-                            else if (isFilled) colors.textPrimary
-                            else colors.border,
-                            animationSpec = tween(durationMillis = 150),
-                            label = "setup_dot_color_anim"
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(18.dp)
-                                .wrapContentSize(Alignment.Center)
-                        ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .offset(x = shakeOffset.value.dp)
+                            .padding(bottom = 8.dp)
+                    ) {
+                        for (i in 0 until 4) {
+                            val isFilled = i < currentInput.length
+                            val dotSize by animateDpAsState(
+                                targetValue = if (isFilled) 18.dp else 12.dp,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessLow
+                                ),
+                                label = "setup_dot_size_anim"
+                            )
+                            val dotColor by animateColorAsState(
+                                targetValue = if (isError) Color(0xFFFF5252)
+                                else if (isFilled) colors.textPrimary
+                                else colors.border,
+                                animationSpec = tween(durationMillis = 150),
+                                label = "setup_dot_color_anim"
+                            )
                             Box(
                                 modifier = Modifier
-                                    .size(dotSize)
-                                    .background(
-                                        color = dotColor,
-                                        shape = CircleShape
-                                    )
-                            )
+                                    .size(18.dp)
+                                    .wrapContentSize(Alignment.Center)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(dotSize)
+                                        .background(
+                                            color = dotColor,
+                                            shape = CircleShape
+                                        )
+                                )
+                            }
                         }
                     }
                 }
+            } else {
+                Spacer(modifier = Modifier.height(1.dp))
             }
 
-            // Aesthetic high density custom light keypad grid
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "DEL")
-
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    modifier = Modifier.widthIn(max = 280.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+            // Interactive Bottom Part (Numpad for steps 1-2, security questions form for step 3)
+            if (step < 3) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    items(keys) { key ->
-                        when (key) {
-                            "" -> {
-                                Spacer(modifier = Modifier.size(60.dp))
-                            }
-                            "DEL" -> {
-                                IconButton(
-                                    onClick = {
-                                        playKeyHaptic()
-                                        if (currentInput.isNotEmpty()) {
-                                            if (step == 1) {
-                                                firstEntry = firstEntry.dropLast(1)
-                                            } else {
-                                                secondEntry = secondEntry.dropLast(1)
+                    val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "DEL")
+
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier.widthIn(max = 280.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        items(keys) { key ->
+                            when (key) {
+                                "" -> {
+                                    Spacer(modifier = Modifier.size(60.dp))
+                                }
+                                "DEL" -> {
+                                    IconButton(
+                                        onClick = {
+                                            playKeyHaptic()
+                                            if (currentInput.isNotEmpty()) {
+                                                if (step == 1) {
+                                                    firstEntry = firstEntry.dropLast(1)
+                                                } else {
+                                                    secondEntry = secondEntry.dropLast(1)
+                                                }
                                             }
-                                        }
-                                    },
-                                    modifier = Modifier
-                                        .size(60.dp)
-                                        .background(colors.cardBg, CircleShape)
-                                        .border(1.dp, colors.border, CircleShape)
-                                        .testTag("key_delete")
+                                        },
+                                        modifier = Modifier
+                                            .size(60.dp)
+                                            .background(colors.cardBg, CircleShape)
+                                            .border(1.dp, colors.border, CircleShape)
+                                            .testTag("key_delete")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Backspace,
+                                            contentDescription = "Backspace",
+                                            tint = colors.textPrimary,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                                else -> {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .size(60.dp)
+                                            .background(colors.cardBg, CircleShape)
+                                            .border(1.dp, colors.border, CircleShape)
+                                            .testTag("key_$key")
+                                            .clickable {
+                                                playKeyHaptic()
+                                                if (currentInput.length < 4) {
+                                                    val added = currentInput + key
+                                                    if (step == 1) {
+                                                        firstEntry = added
+                                                    } else {
+                                                        secondEntry = added
+                                                    }
+                                                }
+                                            }
+                                    ) {
+                                        Text(
+                                            text = key,
+                                            fontSize = 24.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = colors.textPrimary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                val predefinedQuestions = listOf(
+                    "What was the name of your first pet? 🐶",
+                    "What is your mother's maiden name? 👩",
+                    "What city were you born in? 🗺️",
+                    "What was the name of your first school? 🏫",
+                    "What is your favorite book or movie? 🍿"
+                )
+                var answerError by remember { mutableStateOf(false) }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                        .padding(bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Choose a Question 👇",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textPrimary
+                        )
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(colors.cardBg)
+                                    .border(1.dp, colors.border, RoundedCornerShape(12.dp))
+                                    .clickable { questionDropdownExpanded = true }
+                                    .padding(16.dp)
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
+                                    Text(
+                                        text = predefinedQuestions[selectedQuestionIndex],
+                                        color = colors.textPrimary,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
                                     Icon(
-                                        imageVector = Icons.Filled.Backspace,
-                                        contentDescription = "Backspace",
-                                        tint = colors.textPrimary,
-                                        modifier = Modifier.size(22.dp)
+                                        imageVector = Icons.Filled.ArrowDropDown,
+                                        contentDescription = "Select Question",
+                                        tint = colors.textSecondary
                                     )
                                 }
                             }
-                            else -> {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .size(60.dp)
-                                        .background(colors.cardBg, CircleShape)
-                                        .border(1.dp, colors.border, CircleShape)
-                                        .testTag("key_$key")
-                                        .clickable {
-                                            playKeyHaptic()
-                                            if (currentInput.length < 4) {
-                                                val added = currentInput + key
-                                                if (step == 1) {
-                                                    firstEntry = added
-                                                } else {
-                                                    secondEntry = added
-                                                }
-                                            }
+                            DropdownMenu(
+                                expanded = questionDropdownExpanded,
+                                onDismissRequest = { questionDropdownExpanded = false },
+                                modifier = Modifier.background(colors.cardBg)
+                            ) {
+                                predefinedQuestions.forEachIndexed { index, question ->
+                                    DropdownMenuItem(
+                                        text = { Text(question, color = colors.textPrimary) },
+                                        onClick = {
+                                            selectedQuestionIndex = index
+                                            questionDropdownExpanded = false
                                         }
-                                ) {
-                                    Text(
-                                        text = key,
-                                        fontSize = 24.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = colors.textPrimary
                                     )
                                 }
                             }
                         }
+                    }
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Answer ✍️",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textPrimary
+                        )
+                        OutlinedTextField(
+                            value = answerText,
+                            onValueChange = { 
+                                answerText = it
+                                answerError = false
+                            },
+                            placeholder = { Text("Your secret answer...", color = colors.textSecondary) },
+                            singleLine = true,
+                            isError = answerError,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("pin_setup_answer_input"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = colors.textPrimary,
+                                unfocusedTextColor = colors.textPrimary,
+                                focusedBorderColor = colors.textPrimary,
+                                unfocusedBorderColor = colors.border,
+                                focusedLabelColor = colors.textPrimary,
+                                unfocusedLabelColor = colors.textSecondary
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Button(
+                        onClick = {
+                            if (answerText.trim().isNotEmpty()) {
+                                onPinSaved(secondEntry, predefinedQuestions[selectedQuestionIndex], answerText.trim())
+                            } else {
+                                answerError = true
+                                Toast.makeText(context, "Please provide an answer to secure your PIN! 😊", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .testTag("pin_setup_finalize_btn"),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.textPrimary,
+                            contentColor = colors.background
+                        ),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text("Finish & Protect App 🚀", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
                 }
             }
@@ -530,10 +708,41 @@ fun GatewayAuthenticationScreen(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                ThemeSelectorRow(
-                    currentTheme = themeMode,
-                    onThemeSelected = onThemeSelected
-                )
+                val themeIcon = when (themeMode) {
+                    "LIGHT" -> Icons.Filled.WbSunny
+                    "DARK" -> Icons.Filled.NightlightRound
+                    else -> Icons.Filled.BrightnessMedium
+                }
+                val themeDesc = when (themeMode) {
+                    "LIGHT" -> "Light Theme"
+                    "DARK" -> "Dark Theme"
+                    else -> "System Auto Theme"
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.cardBg)
+                        .border(1.dp, colors.border, RoundedCornerShape(12.dp))
+                        .clickable {
+                            val nextTheme = when (themeMode) {
+                                "LIGHT" -> "DARK"
+                                "DARK" -> "SYSTEM"
+                                else -> "LIGHT"
+                            }
+                            onThemeSelected(nextTheme)
+                        }
+                        .testTag("gateway_auth_theme_toggle"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = themeIcon,
+                        contentDescription = "$themeDesc (Click to Cycle)",
+                        tint = colors.textPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
 
             Column(
@@ -710,6 +919,41 @@ fun GatewayAuthenticationScreen(
                     }
                 }
             }
+
+            // Reset PIN Option via Security Question
+            val repo = remember { com.example.data.AppLockRepository.getInstance(context) }
+            val securityQuestion = remember { repo.getSecurityQuestion() }
+            val securityAnswer = remember { repo.getSecurityAnswer() }
+            var showResetDialog by remember { mutableStateOf(false) }
+
+            if (securityQuestion != null && securityAnswer != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                TextButton(
+                    onClick = { showResetDialog = true },
+                    modifier = Modifier.height(48.dp)
+                ) {
+                    Text(
+                        text = "Forgot PIN? 🔑",
+                        color = colors.textPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                }
+
+                if (showResetDialog) {
+                    ForgotPasswordResetDialog(
+                        securityQuestion = securityQuestion,
+                        correctAnswer = securityAnswer,
+                        onDismiss = { showResetDialog = false },
+                        onResetSuccess = { newPin ->
+                            repo.savePin(newPin)
+                            showResetDialog = false
+                            onSuccess() // instantly unlock gating auth
+                            Toast.makeText(context, "PIN Reset Successfully & Unlocked! 🚀", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+            }
         }
     }
 }
@@ -781,11 +1025,7 @@ fun MainConsoleDashboard(viewModel: AppLockViewModel) {
                 .background(colors.background)
         ) {
             // Elegant Header Section of "High Density" spec
-            HeaderSection(
-                viewModel = viewModel,
-                selectedTab = selectedTab,
-                onTabSelected = { selectedTab = it }
-            )
+            HeaderSection(viewModel = viewModel)
 
             Surface(
                 modifier = Modifier.fillMaxSize(),
@@ -816,12 +1056,11 @@ fun MainConsoleDashboard(viewModel: AppLockViewModel) {
 
 // Dedicated High Density Header Section matching HTML spec
 @Composable
-fun HeaderSection(
-    viewModel: AppLockViewModel,
-    selectedTab: Int,
-    onTabSelected: (Int) -> Unit
-) {
+fun HeaderSection(viewModel: AppLockViewModel) {
+    val themeMode by viewModel.themeMode.collectAsState()
     val colors = getThemeColors()
+    val context = LocalContext.current
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -844,68 +1083,39 @@ fun HeaderSection(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // App Locker Screen Block Button
-            val isLockerSelected = selectedTab == 1
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        if (isLockerSelected) colors.textPrimary.copy(alpha = 0.15f)
-                        else colors.cardBg
-                    )
-                    .border(
-                        1.dp,
-                        if (isLockerSelected) colors.textPrimary.copy(alpha = 0.35f) else colors.border,
-                        RoundedCornerShape(12.dp)
-                    )
-                    .then(
-                        if (!isLockerSelected) {
-                            Modifier.clickable { onTabSelected(1) }
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .testTag("header_nav_locker"),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Lock,
-                    contentDescription = "App Locker Tab",
-                    tint = if (isLockerSelected) colors.textPrimary else colors.textSecondary,
-                    modifier = Modifier.size(18.dp)
-                )
+            // Theme Mode Cycler Button (Light -> Dark -> System)
+            val themeIcon = when (themeMode) {
+                "LIGHT" -> Icons.Filled.WbSunny
+                "DARK" -> Icons.Filled.NightlightRound
+                else -> Icons.Filled.BrightnessMedium
+            }
+            val themeDesc = when (themeMode) {
+                "LIGHT" -> "Light Theme"
+                "DARK" -> "Dark Theme"
+                else -> "System Auto Theme"
             }
 
-            // Settings/Setup Screen Block Button
-            val isSettingsSelected = selectedTab == 0
             Box(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        if (isSettingsSelected) colors.textPrimary.copy(alpha = 0.15f)
-                        else colors.cardBg
-                    )
-                    .border(
-                        1.dp,
-                        if (isSettingsSelected) colors.textPrimary.copy(alpha = 0.35f) else colors.border,
-                        RoundedCornerShape(12.dp)
-                    )
-                    .then(
-                        if (!isSettingsSelected) {
-                            Modifier.clickable { onTabSelected(0) }
-                        } else {
-                            Modifier
+                    .background(colors.cardBg)
+                    .border(1.dp, colors.border, RoundedCornerShape(12.dp))
+                    .clickable {
+                        val nextTheme = when (themeMode) {
+                            "LIGHT" -> "DARK"
+                            "DARK" -> "SYSTEM"
+                            else -> "LIGHT"
                         }
-                    )
-                    .testTag("header_nav_settings"),
+                        viewModel.setThemeMode(nextTheme)
+                    }
+                    .testTag("header_theme_toggle"),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Settings,
-                    contentDescription = "Settings Tab",
-                    tint = if (isSettingsSelected) colors.textPrimary else colors.textSecondary,
+                    imageVector = themeIcon,
+                    contentDescription = "$themeDesc (Click to Cycle)",
+                    tint = colors.textPrimary,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -918,10 +1128,14 @@ fun SettingsAndStatusTab(viewModel: AppLockViewModel) {
     val context = LocalContext.current
     val isServiceActive by viewModel.isServiceActive.collectAsState()
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
+    val lockDelaySeconds by viewModel.lockDelaySeconds.collectAsState()
     val hasUsageStatsPermission by viewModel.hasUsageStatsPermission.collectAsState()
     val hasOverlayPermission by viewModel.hasOverlayPermission.collectAsState()
 
     var showPinChangeDialog by remember { mutableStateOf(false) }
+    var showDelaySelectorDialog by remember { mutableStateOf(false) }
+    var showSecurityQuestionDialog by remember { mutableStateOf(false) }
+    val securityQuestion by viewModel.securityQuestion.collectAsState()
     val colors = getThemeColors()
 
     LazyColumn(
@@ -1102,6 +1316,50 @@ fun SettingsAndStatusTab(viewModel: AppLockViewModel) {
 
                     HorizontalDivider(color = colors.border, thickness = 1.dp)
 
+                    // Re-lock Delay Period configuration row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showDelaySelectorDialog = true }
+                            .padding(vertical = 4.dp)
+                            .testTag("relock_delay_setting_row"),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Re-lock Delay Period",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp,
+                                color = colors.textPrimary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            val delayLabel = when (lockDelaySeconds) {
+                                0 -> "Immediately"
+                                15 -> "15 Seconds"
+                                30 -> "30 Seconds"
+                                60 -> "1 Minute"
+                                120 -> "2 Minutes"
+                                300 -> "5 Minutes"
+                                else -> "$lockDelaySeconds Seconds"
+                            }
+                            Text(
+                                text = "Delay before app locks again: $delayLabel",
+                                fontSize = 12.sp,
+                                color = colors.textSecondary
+                            )
+                        }
+
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = "Configure Re-lock Delay",
+                            tint = colors.textSecondary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    HorizontalDivider(color = colors.border, thickness = 1.dp)
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1132,47 +1390,44 @@ fun SettingsAndStatusTab(viewModel: AppLockViewModel) {
                             modifier = Modifier.size(24.dp)
                         )
                     }
+
+                    HorizontalDivider(color = colors.border, thickness = 1.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showSecurityQuestionDialog = true }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Security Question 🛡️",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp,
+                                color = colors.textPrimary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (securityQuestion != null) "Configured: $securityQuestion" else "Reset your PIN if you ever forget it",
+                                fontSize = 12.sp,
+                                color = colors.textSecondary
+                            )
+                        }
+
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = "Change Security Question",
+                            tint = colors.textSecondary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
         }
 
-        // App Theme Selector in One Block matching HTML spec
-        item {
-            val themeMode by viewModel.themeMode.collectAsState()
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = colors.cardBg),
-                border = BorderStroke(1.dp, colors.border),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(1.dp, RoundedCornerShape(24.dp))
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "App Color Theme",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = colors.textPrimary
-                    )
-                    Text(
-                        text = "Customize application display. Choosing Light, Dark, or System mode to adjust visual appearance.",
-                        fontSize = 12.sp,
-                        color = colors.textSecondary
-                    )
-                    ThemeSelectorRow(
-                        currentTheme = themeMode,
-                        onThemeSelected = { newTheme ->
-                            viewModel.setThemeMode(newTheme)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        }
-
+        // Extra margin bottom
         item {
             Spacer(modifier = Modifier.height(30.dp))
         }
@@ -1186,6 +1441,31 @@ fun SettingsAndStatusTab(viewModel: AppLockViewModel) {
                 viewModel.savePin(newPin)
                 showPinChangeDialog = false
                 Toast.makeText(context, "PIN code updated successfully!", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    if (showDelaySelectorDialog) {
+        LockDelaySelectorDialog(
+            currentDelaySeconds = lockDelaySeconds,
+            onDismiss = { showDelaySelectorDialog = false },
+            onDelaySelected = { seconds ->
+                viewModel.setLockDelaySeconds(seconds)
+                showDelaySelectorDialog = false
+                Toast.makeText(context, "Re-lock delay period updated!", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    if (showSecurityQuestionDialog) {
+        ConfigureSecurityQuestionDialog(
+            currentQuestion = securityQuestion,
+            currentAnswer = viewModel.securityAnswer.value,
+            onDismiss = { showSecurityQuestionDialog = false },
+            onSave = { question, answer ->
+                viewModel.saveSecurityQuestionAndAnswer(question, answer)
+                showSecurityQuestionDialog = false
+                Toast.makeText(context, "Security question configurations updated! 👍", Toast.LENGTH_SHORT).show()
             }
         )
     }
@@ -1633,4 +1913,391 @@ fun AppItemRow(
             }
         }
     }
+}
+
+@Composable
+fun LockDelaySelectorDialog(
+    currentDelaySeconds: Int,
+    onDismiss: () -> Unit,
+    onDelaySelected: (Int) -> Unit
+) {
+    val colors = getThemeColors()
+    val delayOptions = listOf(
+        0 to "Immediately",
+        15 to "15 Seconds",
+        30 to "30 Seconds",
+        60 to "1 Minute",
+        120 to "2 Minutes",
+        300 to "5 Minutes"
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                "Configure Re-lock Delay",
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+                fontSize = 18.sp
+            )
+        },
+        containerColor = colors.cardBg,
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "App will stay temporarily unlocked for this long after screen turns off or minimization.",
+                    color = colors.textSecondary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                delayOptions.forEach { (seconds, label) ->
+                    val isSelected = currentDelaySeconds == seconds
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onDelaySelected(seconds) }
+                            .padding(vertical = 12.dp, horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (isSelected) colors.textPrimary else colors.textSecondary,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                            fontSize = 15.sp
+                        )
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = { onDelaySelected(seconds) },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = colors.textPrimary,
+                                unselectedColor = colors.border
+                            )
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Dismiss", color = colors.textPrimary, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+@Composable
+fun ConfigureSecurityQuestionDialog(
+    currentQuestion: String?,
+    currentAnswer: String?,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit
+) {
+    val colors = getThemeColors()
+    val predefinedQuestions = listOf(
+        "What was the name of your first pet? 🐶",
+        "What is your mother's maiden name? 👩",
+        "What city were you born in? 🗺️",
+        "What was the name of your first school? 🏫",
+        "What is your favorite book or movie? 🍿"
+    )
+
+    var selectedQuestionIndex by remember {
+        mutableIntStateOf(
+            predefinedQuestions.indexOf(currentQuestion).coerceAtLeast(0)
+        )
+    }
+    var answerText by remember { mutableStateOf(currentAnswer ?: "") }
+    var dropdownExpanded by remember { mutableStateOf(false) }
+    var inputError by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                "Configure Security Question 🛡️",
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+                fontSize = 18.sp
+            )
+        },
+        containerColor = colors.cardBg,
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "If you forget your security PIN, this question will allow you to instantly reset it securely. 😊",
+                    color = colors.textSecondary,
+                    fontSize = 13.sp
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "Choose a Question 👇",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textPrimary
+                    )
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(colors.background)
+                                .border(1.dp, colors.border, RoundedCornerShape(10.dp))
+                                .clickable { dropdownExpanded = true }
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = predefinedQuestions[selectedQuestionIndex],
+                                    color = colors.textPrimary,
+                                    fontSize = 14.sp
+                                )
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowDropDown,
+                                    contentDescription = "Expand",
+                                    tint = colors.textSecondary
+                                )
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = dropdownExpanded,
+                            onDismissRequest = { dropdownExpanded = false },
+                            modifier = Modifier.background(colors.cardBg)
+                        ) {
+                            predefinedQuestions.forEachIndexed { index, question ->
+                                DropdownMenuItem(
+                                    text = { Text(question, color = colors.textPrimary, fontSize = 14.sp) },
+                                    onClick = {
+                                        selectedQuestionIndex = index
+                                        dropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "Answer ✍️",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textPrimary
+                    )
+                    OutlinedTextField(
+                        value = answerText,
+                        onValueChange = { 
+                            answerText = it 
+                            inputError = false
+                        },
+                        placeholder = { Text("Your case-insensitive answer...", color = colors.textSecondary) },
+                        singleLine = true,
+                        isError = inputError,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = colors.textPrimary,
+                            unfocusedTextColor = colors.textPrimary,
+                            focusedBorderColor = colors.textPrimary,
+                            unfocusedBorderColor = colors.border
+                        )
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = colors.textSecondary)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (answerText.trim().isNotEmpty()) {
+                        onSave(predefinedQuestions[selectedQuestionIndex], answerText.trim())
+                    } else {
+                        inputError = true
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.textPrimary,
+                    contentColor = colors.cardBg
+                )
+            ) {
+                Text("Save Setup 🔐", fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+@Composable
+fun ForgotPasswordResetDialog(
+    securityQuestion: String,
+    correctAnswer: String,
+    onDismiss: () -> Unit,
+    onResetSuccess: (String) -> Unit
+) {
+    val colors = getThemeColors()
+    var answerInput by remember { mutableStateOf("") }
+    
+    // State for setting new PIN once answer is correct
+    var step by remember { mutableIntStateOf(1) } // 1: Verify Answer, 2: Enter New PIN, 3: Confirm New PIN
+    var newPin1 by remember { mutableStateOf("") }
+    var newPin2 by remember { mutableStateOf("") }
+    
+    var errorMsg by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = if (step == 1) "Verify Security Answer 🛡️" else "Reset Security PIN 🔄",
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+                fontSize = 18.sp
+            )
+        },
+        containerColor = colors.cardBg,
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (step == 1) {
+                    Text(
+                        text = "Question: $securityQuestion",
+                        color = colors.textPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp
+                    )
+
+                    OutlinedTextField(
+                        value = answerInput,
+                        onValueChange = { 
+                            answerInput = it 
+                            errorMsg = ""
+                        },
+                        placeholder = { Text("Your answer...", color = colors.textSecondary) },
+                        singleLine = true,
+                        isError = errorMsg.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = colors.textPrimary,
+                            unfocusedTextColor = colors.textPrimary,
+                            focusedBorderColor = colors.textPrimary,
+                            unfocusedBorderColor = colors.border
+                        )
+                    )
+
+                    if (errorMsg.isNotEmpty()) {
+                        Text(
+                            text = errorMsg,
+                            color = Color(0xFFFF5252),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                } else {
+                    Text(
+                        text = if (step == 2) "Type your new 4-digit PIN 🔐" else "Confirm your new 4-digit PIN 🔄",
+                        color = colors.textSecondary,
+                        fontSize = 14.sp
+                    )
+
+                    OutlinedTextField(
+                        value = if (step == 2) newPin1 else newPin2,
+                        onValueChange = { input ->
+                            if (input.length <= 4 && input.all { it.isDigit() }) {
+                                if (step == 2) newPin1 = input else newPin2 = input
+                                errorMsg = ""
+                            }
+                        },
+                        placeholder = { Text("xxxx", color = colors.textSecondary) },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        ),
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        isError = errorMsg.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = colors.textPrimary,
+                            unfocusedTextColor = colors.textPrimary,
+                            focusedBorderColor = colors.textPrimary,
+                            unfocusedBorderColor = colors.border
+                        )
+                    )
+
+                    if (errorMsg.isNotEmpty()) {
+                        Text(
+                            text = errorMsg,
+                            color = Color(0xFFFF5252),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = colors.textSecondary)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (step == 1) {
+                        if (answerInput.trim().equals(correctAnswer.trim(), ignoreCase = true)) {
+                            step = 2
+                            errorMsg = ""
+                        } else {
+                            errorMsg = "Incorrect answer! Please try again. 😢"
+                        }
+                    } else if (step == 2) {
+                        if (newPin1.length == 4) {
+                            step = 3
+                            errorMsg = ""
+                        } else {
+                            errorMsg = "PIN must be exactly 4 digits."
+                        }
+                    } else {
+                        if (newPin1 == newPin2) {
+                            onResetSuccess(newPin1)
+                        } else {
+                            errorMsg = "PIN choices do not match. Try again."
+                            step = 2
+                            newPin1 = ""
+                            newPin2 = ""
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.textPrimary,
+                    contentColor = colors.cardBg
+                )
+            ) {
+                Text(
+                    text = when (step) {
+                        1 -> "Verify 🗝️"
+                        2 -> "Continue ➡️"
+                        else -> "Save & Unlock 🚀"
+                    },
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    )
 }
