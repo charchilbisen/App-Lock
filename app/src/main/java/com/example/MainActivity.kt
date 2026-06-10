@@ -50,6 +50,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.example.ui.theme.*
 import com.example.ui.triggerHapticFeedback
 import com.example.ui.triggerLockToggleVibration
+import com.example.ui.playBiometricSuccessFeedback
 import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.graphicsLayer
 import com.example.viewmodel.AppItem
@@ -182,7 +183,7 @@ class MainActivity : FragmentActivity() {
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    triggerHapticFeedback(this@MainActivity, success = true)
+                    playBiometricSuccessFeedback(this@MainActivity)
                     isGatingUnlockedAnimTriggered.value = true
                 }
 
@@ -227,6 +228,7 @@ fun PinSetupScreen(
 
     val view = androidx.compose.ui.platform.LocalView.current
     val context = androidx.compose.ui.platform.LocalContext.current
+    val repository = remember { com.example.data.AppLockRepository.getInstance(context) }
 
     fun playKeyHaptic() {
         // Disabled as requested
@@ -445,21 +447,30 @@ fun PinSetupScreen(
                                     Spacer(modifier = Modifier.size(60.dp))
                                 }
                                 "DEL" -> {
-                                    IconButton(
-                                        onClick = {
-                                            playKeyHaptic()
-                                            if (currentInput.isNotEmpty()) {
-                                                if (step == 1) {
-                                                    firstEntry = firstEntry.dropLast(1)
-                                                } else {
-                                                    secondEntry = secondEntry.dropLast(1)
-                                                }
-                                            }
-                                        },
+                                    Box(
+                                        contentAlignment = Alignment.Center,
                                         modifier = Modifier
                                             .size(60.dp)
+                                            .clip(CircleShape)
                                             .background(colors.cardBg, CircleShape)
                                             .border(1.dp, colors.border, CircleShape)
+                                            .clickable {
+                                                if (repository.isTouchSoundEnabled()) {
+                                                    try {
+                                                        view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                                                    } catch (e: Exception) {
+                                                        // Safe fallback
+                                                    }
+                                                }
+                                                playKeyHaptic()
+                                                if (currentInput.isNotEmpty()) {
+                                                    if (step == 1) {
+                                                        firstEntry = firstEntry.dropLast(1)
+                                                    } else {
+                                                        secondEntry = secondEntry.dropLast(1)
+                                                    }
+                                                }
+                                            }
                                             .testTag("key_delete")
                                     ) {
                                         Icon(
@@ -475,10 +486,17 @@ fun PinSetupScreen(
                                         contentAlignment = Alignment.Center,
                                         modifier = Modifier
                                             .size(60.dp)
+                                            .clip(CircleShape)
                                             .background(colors.cardBg, CircleShape)
                                             .border(1.dp, colors.border, CircleShape)
-                                            .testTag("key_$key")
                                             .clickable {
+                                                if (repository.isTouchSoundEnabled()) {
+                                                    try {
+                                                        view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                                                    } catch (e: Exception) {
+                                                        // Safe fallback
+                                                    }
+                                                }
                                                 playKeyHaptic()
                                                 if (currentInput.length < 4) {
                                                     val added = currentInput + key
@@ -489,6 +507,7 @@ fun PinSetupScreen(
                                                     }
                                                 }
                                             }
+                                            .testTag("key_$key")
                                     ) {
                                         Text(
                                             text = key,
@@ -652,6 +671,7 @@ fun GatewayAuthenticationScreen(
     var isError by remember { mutableStateOf(false) }
     val view = androidx.compose.ui.platform.LocalView.current
     val context = androidx.compose.ui.platform.LocalContext.current
+    val repository = remember { com.example.data.AppLockRepository.getInstance(context) }
 
     LaunchedEffect(enteredPin) {
         if (enteredPin.length == 4) {
@@ -849,14 +869,23 @@ fun GatewayAuthenticationScreen(
                         when (key) {
                             "BIO" -> {
                                 if (isBiometricAvailable) {
-                                    IconButton(
-                                        onClick = {
-                                            playKeyHaptic()
-                                            onBiometricClick()
-                                        },
+                                    Box(
+                                        contentAlignment = Alignment.Center,
                                         modifier = Modifier
                                             .size(60.dp)
+                                            .clip(CircleShape)
                                             .background(colors.accent, CircleShape)
+                                            .clickable {
+                                                if (repository.isTouchSoundEnabled()) {
+                                                    try {
+                                                        view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                                                    } catch (e: Exception) {
+                                                        // Safe fallback
+                                                    }
+                                                }
+                                                playKeyHaptic()
+                                                onBiometricClick()
+                                            }
                                             .testTag("key_biometrics")
                                     ) {
                                         Icon(
@@ -871,17 +900,26 @@ fun GatewayAuthenticationScreen(
                                 }
                             }
                             "DEL" -> {
-                                IconButton(
-                                    onClick = {
-                                        playKeyHaptic()
-                                        if (enteredPin.isNotEmpty()) {
-                                            enteredPin = enteredPin.dropLast(1)
-                                        }
-                                    },
+                                Box(
+                                    contentAlignment = Alignment.Center,
                                     modifier = Modifier
                                         .size(60.dp)
+                                        .clip(CircleShape)
                                         .background(colors.cardBg, CircleShape)
                                         .border(1.dp, colors.border, CircleShape)
+                                        .clickable {
+                                            if (repository.isTouchSoundEnabled()) {
+                                                try {
+                                                    view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                                                } catch (e: Exception) {
+                                                    // Safe fallback
+                                                }
+                                            }
+                                            playKeyHaptic()
+                                            if (enteredPin.isNotEmpty()) {
+                                                enteredPin = enteredPin.dropLast(1)
+                                            }
+                                        }
                                         .testTag("key_delete")
                                 ) {
                                     Icon(
@@ -897,15 +935,23 @@ fun GatewayAuthenticationScreen(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
                                         .size(60.dp)
+                                        .clip(CircleShape)
                                         .background(colors.cardBg, CircleShape)
                                         .border(1.dp, colors.border, CircleShape)
-                                        .testTag("key_$key")
                                         .clickable {
+                                            if (repository.isTouchSoundEnabled()) {
+                                                try {
+                                                    view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                                                } catch (e: Exception) {
+                                                    // Safe fallback
+                                                }
+                                            }
                                             playKeyHaptic()
                                             if (enteredPin.length < 4) {
                                                 enteredPin += key
                                             }
                                         }
+                                        .testTag("key_$key")
                                 ) {
                                     Text(
                                         text = key,
@@ -963,6 +1009,8 @@ fun GatewayAuthenticationScreen(
 fun MainConsoleDashboard(viewModel: AppLockViewModel) {
     val hasUsageStats by viewModel.hasUsageStatsPermission.collectAsState()
     val hasOverlay by viewModel.hasOverlayPermission.collectAsState()
+    val view = androidx.compose.ui.platform.LocalView.current
+    val isTouchSoundEnabled by viewModel.isTouchSoundEnabled.collectAsState()
 
     var selectedTab by remember {
         mutableIntStateOf(if (hasUsageStats && hasOverlay) 1 else 0)
@@ -989,7 +1037,16 @@ fun MainConsoleDashboard(viewModel: AppLockViewModel) {
             ) {
                 NavigationBarItem(
                     selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
+                    onClick = {
+                        if (isTouchSoundEnabled) {
+                            try {
+                                view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                            } catch (e: Exception) {
+                                // Default safe fallback
+                            }
+                        }
+                        selectedTab = 0
+                    },
                     icon = { Icon(imageVector = Icons.Filled.Settings, contentDescription = "Settings Tab") },
                     label = { Text("Status & Setup", fontWeight = FontWeight.SemiBold, fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
@@ -1003,7 +1060,16 @@ fun MainConsoleDashboard(viewModel: AppLockViewModel) {
                 )
                 NavigationBarItem(
                     selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
+                    onClick = {
+                        if (isTouchSoundEnabled) {
+                            try {
+                                view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                            } catch (e: Exception) {
+                                // Default safe fallback
+                            }
+                        }
+                        selectedTab = 1
+                    },
                     icon = { Icon(imageVector = Icons.Filled.Apps, contentDescription = "Apps Tab") },
                     label = { Text("App Locker", fontWeight = FontWeight.SemiBold, fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
@@ -1060,6 +1126,8 @@ fun HeaderSection(viewModel: AppLockViewModel) {
     val themeMode by viewModel.themeMode.collectAsState()
     val colors = getThemeColors()
     val context = LocalContext.current
+    val view = androidx.compose.ui.platform.LocalView.current
+    val isTouchSoundEnabled by viewModel.isTouchSoundEnabled.collectAsState()
 
     Row(
         modifier = Modifier
@@ -1102,6 +1170,13 @@ fun HeaderSection(viewModel: AppLockViewModel) {
                     .background(colors.cardBg)
                     .border(1.dp, colors.border, RoundedCornerShape(12.dp))
                     .clickable {
+                        if (isTouchSoundEnabled) {
+                            try {
+                                view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                            } catch (e: Exception) {
+                                // Default safe fallback
+                            }
+                        }
                         val nextTheme = when (themeMode) {
                             "LIGHT" -> "DARK"
                             "DARK" -> "SYSTEM"
@@ -1128,6 +1203,7 @@ fun SettingsAndStatusTab(viewModel: AppLockViewModel) {
     val context = LocalContext.current
     val isServiceActive by viewModel.isServiceActive.collectAsState()
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
+    val isTouchSoundEnabled by viewModel.isTouchSoundEnabled.collectAsState()
     val lockDelaySeconds by viewModel.lockDelaySeconds.collectAsState()
     val hasUsageStatsPermission by viewModel.hasUsageStatsPermission.collectAsState()
     val hasOverlayPermission by viewModel.hasOverlayPermission.collectAsState()
@@ -1311,6 +1387,44 @@ fun SettingsAndStatusTab(viewModel: AppLockViewModel) {
                                 uncheckedThumbColor = colors.textSecondary,
                                 uncheckedTrackColor = colors.border
                             )
+                        )
+                    }
+
+                    HorizontalDivider(color = colors.border, thickness = 1.dp)
+
+                    // Touch Feedback Sounds setting option
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Screen Touch Sounds",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp,
+                                color = colors.textPrimary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Play responsive keypad and selection feedback sounds.",
+                                fontSize = 12.sp,
+                                color = colors.textSecondary
+                            )
+                        }
+
+                        Switch(
+                            checked = isTouchSoundEnabled,
+                            onCheckedChange = { enabled ->
+                                viewModel.toggleTouchSoundEnabled(enabled)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = colors.cardBg,
+                                checkedTrackColor = colors.textPrimary,
+                                uncheckedThumbColor = colors.textSecondary,
+                                uncheckedTrackColor = colors.border
+                            ),
+                            modifier = Modifier.testTag("touch_sound_switch")
                         )
                     }
 
@@ -1785,6 +1899,11 @@ fun CategoryTabPill(
     modifier: Modifier = Modifier
 ) {
     val colors = getThemeColors()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val view = androidx.compose.ui.platform.LocalView.current
+    val repository = remember { com.example.data.AppLockRepository.getInstance(context) }
+    val isTouchSoundEnabled = remember { repository.isTouchSoundEnabled() }
+
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
@@ -1794,7 +1913,16 @@ fun CategoryTabPill(
                 BorderStroke(1.dp, if (isSelected) colors.textPrimary else colors.border),
                 RoundedCornerShape(50)
             )
-            .clickable { onClick() }
+            .clickable {
+                if (isTouchSoundEnabled) {
+                    try {
+                        view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                    } catch (e: Exception) {
+                        // Safe fallback
+                    }
+                }
+                onClick()
+            }
             .padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
         Text(
@@ -1812,13 +1940,25 @@ fun AppItemRow(
     onLockChange: (Boolean) -> Unit
 ) {
     val colors = getThemeColors()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val view = androidx.compose.ui.platform.LocalView.current
+    val repository = remember { com.example.data.AppLockRepository.getInstance(context) }
+    val isTouchSoundEnabled = remember { repository.isTouchSoundEnabled() }
+
     Surface(
-        onClick = { onLockChange(!appItem.isLocked) },
+        onClick = {
+            if (isTouchSoundEnabled) {
+                try {
+                    view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                } catch (e: Exception) {
+                    // Safe fallback
+                }
+            }
+            onLockChange(!appItem.isLocked)
+        },
         shape = RoundedCornerShape(16.dp),
         color = colors.cardBg,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onLockChange(!appItem.isLocked) }
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
@@ -1902,7 +2042,7 @@ fun AppItemRow(
 
                 Switch(
                     checked = appItem.isLocked,
-                    onCheckedChange = onLockChange,
+                    onCheckedChange = null, // Delegate click handling completely to the parent Surface row
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = colors.cardBg,
                         checkedTrackColor = colors.textPrimary,

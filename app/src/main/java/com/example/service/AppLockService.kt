@@ -122,9 +122,11 @@ class AppLockService : Service() {
         serviceScope.launch {
             while (isActive) {
                 try {
-                    // Poll current foreground package
-                    val foregroundPackage = getForegroundApp(this@AppLockService)
-                    if (foregroundPackage != null) {
+                    // Poll current foreground package and class details
+                    val appInfo = getForegroundApp(this@AppLockService)
+                    if (appInfo != null) {
+                        val foregroundPackage = appInfo.packageName
+                        val foregroundClass = appInfo.className
                         // Check if foreground package is ignored (launcher, system UI, our app)
                         val isIgnored = foregroundPackage == packageName ||
                                 foregroundPackage == "com.android.systemui" ||
@@ -148,7 +150,7 @@ class AppLockService : Service() {
                             lastActiveUserApp = foregroundPackage
                         }
 
-                        handleForegroundApp(foregroundPackage)
+                        handleForegroundApp(foregroundPackage, foregroundClass)
                     }
                 } catch (e: Exception) {
                     Log.e("AppLockService", "Error in app monitoring loop", e)
@@ -158,7 +160,7 @@ class AppLockService : Service() {
         }
     }
 
-    private suspend fun handleForegroundApp(packageName: String) {
+    private suspend fun handleForegroundApp(packageName: String, className: String) {
         // Essential Guard: Never lock our own application, launcher UI, or standard system components
         val isOurApp = packageName == this.packageName
         val isSystemIgnored = packageName == "com.android.systemui" ||
@@ -170,13 +172,23 @@ class AppLockService : Service() {
             return
         }
 
-        // Uninstallation & Clearing Protection: Lock Settings and Package Installers so they require PIN
-        val isProtectedUninstallApp = packageName == "com.android.settings" ||
+        // Uninstallation & Clearing Protection: Lock Package Installers so they require PIN before uninstalling apps
+        val isProtectedUninstallApp = packageName.contains("packageinstaller", ignoreCase = true) ||
+                packageName.contains("permissioncontroller", ignoreCase = true) ||
                 packageName == "com.android.packageinstaller" ||
                 packageName == "com.google.android.packageinstaller" ||
-                packageName == "com.sec.android.app.packageinstaller"
+                packageName == "com.sec.android.app.packageinstaller" ||
+                packageName == "com.google.android.permissioncontroller"
 
-        val shouldLock = repository.isServiceActive() && (isProtectedUninstallApp || repository.isAppLocked(packageName))
+        // App Info/Show app detail protection within Settings so users cannot force-close or uninstall from settings
+        val isSettingsAppInfoPage = (packageName.contains("settings", ignoreCase = true) || packageName == "com.android.settings") &&
+                (className.contains("InstalledAppDetails", ignoreCase = true) ||
+                 className.contains("AppDetails", ignoreCase = true) ||
+                 className.contains("AppInfo", ignoreCase = true) ||
+                 className.contains("Details", ignoreCase = true) ||
+                 className.contains("ManageApplications", ignoreCase = true))
+
+        val shouldLock = repository.isServiceActive() && (isProtectedUninstallApp || isSettingsAppInfoPage || repository.isAppLocked(packageName))
 
         if (shouldLock) {
             // Check if this app has already been authorized or temporarily unlocked
@@ -197,29 +209,39 @@ class AppLockService : Service() {
         startActivity(lockIntent)
     }
 
-    private fun getForegroundApp(context: Context): String? {
+    // Helper data class to store package/class details
+    data class ForegroundAppInfo(val packageName: String, val className: String)
+
+    private fun getForegroundApp(context: Context): ForegroundAppInfo? {
         val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val time = System.currentTimeMillis()
         // Query last 10 seconds
         val usageEvents = usageStatsManager.queryEvents(time - 10000, time)
         val event = UsageEvents.Event()
-        var foregroundApp: String? = null
+        var foregroundPackage: String? = null
+        var foregroundClass: String = ""
 
         while (usageEvents.hasNextEvent()) {
             usageEvents.getNextEvent(event)
             if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED ||
                 event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
-                foregroundApp = event.packageName
+                foregroundPackage = event.packageName
+                foregroundClass = event.className ?: ""
             }
         }
 
-        if (foregroundApp == null) {
+        if (foregroundPackage == null) {
             val stats = usageStatsManager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, time - 10000, time)
             if (!stats.isNullOrEmpty()) {
-                foregroundApp = stats.maxByOrNull { it.lastTimeUsed }?.packageName
+                foregroundPackage = stats.maxByOrNull { it.lastTimeUsed }?.packageName
             }
         }
-        return foregroundApp
+
+        return if (foregroundPackage != null) {
+            ForegroundAppInfo(foregroundPackage, foregroundClass)
+        } else {
+            null
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

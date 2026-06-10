@@ -86,6 +86,15 @@ class AppLockRepository private constructor(private val context: Context) {
         prefs.edit().putBoolean("service_active", active).apply()
     }
 
+    // Touch and keypad click sound feedback
+    fun isTouchSoundEnabled(): Boolean {
+        return prefs.getBoolean("touch_sound_enabled", true)
+    }
+
+    fun setTouchSoundEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("touch_sound_enabled", enabled).apply()
+    }
+
     // Theme Mode configurations: "SYSTEM", "LIGHT", "DARK"
     fun getThemeMode(): String {
         return prefs.getString("theme_mode", "SYSTEM") ?: "SYSTEM"

@@ -208,7 +208,7 @@ class LockActivity : FragmentActivity() {
 
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    triggerHapticFeedback(this@LockActivity, success = true)
+                    playBiometricSuccessFeedback(this@LockActivity)
                     isUnlockedAnimTriggered.value = true
                 }
 
@@ -259,6 +259,8 @@ fun LockScreenContent(
     var isError by remember { mutableStateOf(false) }
     val view = androidx.compose.ui.platform.LocalView.current
     val context = androidx.compose.ui.platform.LocalContext.current
+    val repository = remember { com.example.data.AppLockRepository.getInstance(context) }
+    val isSoundEnabled = remember { repository.isTouchSoundEnabled() }
 
     fun playKeyHaptic() {
         // Disabled as requested
@@ -495,14 +497,23 @@ fun LockScreenContent(
                         when (key) {
                             "BIO" -> {
                                 if (isBiometricAvailable) {
-                                    IconButton(
-                                        onClick = {
-                                            playKeyHaptic()
-                                            onBiometricClick()
-                                        },
+                                    Box(
+                                        contentAlignment = Alignment.Center,
                                         modifier = Modifier
                                             .size(72.dp)
+                                            .clip(CircleShape)
                                             .background(colors.accent, CircleShape)
+                                            .clickable {
+                                                if (isSoundEnabled) {
+                                                    try {
+                                                        view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                                                    } catch (e: Exception) {
+                                                        // Safe fallback
+                                                    }
+                                                }
+                                                playKeyHaptic()
+                                                onBiometricClick()
+                                            }
                                             .testTag("key_biometrics")
                                     ) {
                                         Icon(
@@ -517,17 +528,26 @@ fun LockScreenContent(
                                 }
                             }
                             "DEL" -> {
-                                IconButton(
-                                    onClick = {
-                                        playKeyHaptic()
-                                        if (enteredPin.isNotEmpty()) {
-                                            enteredPin = enteredPin.dropLast(1)
-                                        }
-                                    },
+                                Box(
+                                    contentAlignment = Alignment.Center,
                                     modifier = Modifier
                                         .size(72.dp)
+                                        .clip(CircleShape)
                                         .background(colors.cardBg, CircleShape)
                                         .border(1.dp, colors.border, CircleShape)
+                                        .clickable {
+                                            if (isSoundEnabled) {
+                                                try {
+                                                    view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                                                } catch (e: Exception) {
+                                                    // Safe fallback
+                                                }
+                                            }
+                                            playKeyHaptic()
+                                            if (enteredPin.isNotEmpty()) {
+                                                enteredPin = enteredPin.dropLast(1)
+                                            }
+                                        }
                                         .testTag("key_delete")
                                 ) {
                                     Icon(
@@ -543,15 +563,23 @@ fun LockScreenContent(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
                                         .size(72.dp)
+                                        .clip(CircleShape)
                                         .background(colors.cardBg, CircleShape)
                                         .border(1.dp, colors.border, CircleShape)
-                                        .testTag("key_$key")
                                         .clickable {
+                                            if (isSoundEnabled) {
+                                                try {
+                                                    view.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                                                } catch (e: Exception) {
+                                                    // Safe fallback
+                                                }
+                                            }
                                             playKeyHaptic()
                                             if (enteredPin.length < savedPin.length) {
                                                 enteredPin += key
                                             }
                                         }
+                                        .testTag("key_$key")
                                 ) {
                                     Text(
                                         text = key,
@@ -640,6 +668,43 @@ fun triggerLockToggleVibration(context: Context) {
             } else {
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(55)
+            }
+        }
+    } catch (e: Exception) {
+        // Safe fallback
+    }
+}
+
+fun playBiometricSuccessFeedback(context: Context) {
+    // 1. Soft vibration (tactile click)
+    try {
+        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        if (vibrator != null && vibrator.hasVibrator()) {
+            val duration = 40L
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                // soft/light amplitude = 35 for subtle tactile response
+                vibrator.vibrate(android.os.VibrationEffect.createOneShot(duration, 35))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(duration)
+            }
+        }
+    } catch (e: Exception) {
+        // Safe fallback
+    }
+
+    // 2. Play success clicking sound effect if sound is enabled
+    try {
+        val repository = com.example.data.AppLockRepository.getInstance(context)
+        if (repository.isTouchSoundEnabled()) {
+            if (context is android.app.Activity) {
+                context.window.decorView.post {
+                    try {
+                        context.window.decorView.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                    } catch (e: Exception) {
+                        // Safe fallback
+                    }
+                }
             }
         }
     } catch (e: Exception) {

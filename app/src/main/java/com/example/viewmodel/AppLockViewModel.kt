@@ -84,6 +84,9 @@ class AppLockViewModel(private val context: Context) : ViewModel() {
     private val _lockDelaySeconds = MutableStateFlow(repository.getLockDelaySeconds())
     val lockDelaySeconds: StateFlow<Int> = _lockDelaySeconds.asStateFlow()
 
+    private val _isTouchSoundEnabled = MutableStateFlow(repository.isTouchSoundEnabled())
+    val isTouchSoundEnabled: StateFlow<Boolean> = _isTouchSoundEnabled.asStateFlow()
+
     private val _securityQuestion = MutableStateFlow(repository.getSecurityQuestion())
     val securityQuestion: StateFlow<String?> = _securityQuestion.asStateFlow()
 
@@ -176,6 +179,11 @@ class AppLockViewModel(private val context: Context) : ViewModel() {
     fun toggleBiometricEnabled(enabled: Boolean) {
         repository.setBiometricEnabled(enabled)
         _isBiometricEnabled.value = enabled
+    }
+
+    fun toggleTouchSoundEnabled(enabled: Boolean) {
+        repository.setTouchSoundEnabled(enabled)
+        _isTouchSoundEnabled.value = enabled
     }
 
     private fun loadInstalledLaunchableApps(): List<AppItem> {
